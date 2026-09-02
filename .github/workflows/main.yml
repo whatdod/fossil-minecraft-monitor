@@ -13,9 +13,12 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
       - name: Install Playwright
         run: |
-          pip install playwright
+          pip install playwright requests
           playwright install --with-deps chromium
 
       - name: Check Fossil The End
@@ -51,7 +54,6 @@ jobs:
               else:
                   print("❌ THE END NON DISPONIBILE")
 
-              # Leggiamo lo stato precedente da GitHub
               state_file = "fossil_status.txt"
 
               try:
@@ -65,7 +67,6 @@ jobs:
               print(f"Stato precedente: {previous}")
               print(f"Stato attuale: {current}")
 
-              # Avvisa SOLO quando cambia da disponibile a non disponibile
               if previous == "available" and current == "soldout":
 
                   message = (
@@ -104,7 +105,6 @@ jobs:
 
                   print("🟢 RESTOCK ALERT SENT")
 
-              # Salviamo lo stato attuale
               with open(state_file, "w") as f:
                   f.write(current)
 
