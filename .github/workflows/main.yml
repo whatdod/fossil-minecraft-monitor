@@ -9,6 +9,9 @@ on:
         description: "Invia un messaggio di test su Telegram"
         required: false
         default: "false"
+  push:
+    branches:
+      - main
 
 permissions:
   contents: write
