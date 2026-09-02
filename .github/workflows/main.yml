@@ -1,17 +1,21 @@
 name: Fossil Minecraft Monitor
-
 on:
   schedule:
     - cron: "*/15 * * * *"
   workflow_dispatch:
-
+    inputs:
+      force_notify:
+        description: "Invia un messaggio di test su Telegram (per verificare che il bot funzioni)"
+        required: false
+        default: "false"
 permissions:
   contents: write
-
+concurrency:
+  group: fossil-monitor
+  cancel-in-progress: false
 jobs:
   monitor:
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -25,6 +29,7 @@ jobs:
         env:
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
           CHAT_ID: ${{ secrets.CHAT_ID }}
+          FORCE_NOTIFY: ${{ github.event.inputs.force_notify }}
         run: |
           python - <<'PY'
           import os
@@ -32,30 +37,71 @@ jobs:
           from playwright.sync_api import sync_playwright
 
           url = "https://www.fossil.com/it-it/products/cronografo-minecraft-x-fossil-the-end-44-mm-in-edizione-limitata/LE1252.html"
+          bot_token = os.environ["BOT_TOKEN"]
+          chat_id = os.environ["CHAT_ID"]
+
+          def send_telegram(msg):
+              requests.post(
+                  f"https://api.telegram.org/bot{bot_token}/sendMessage",
+                  data={"chat_id": chat_id, "text": msg},
+                  timeout=30,
+              )
+
+          # Test manuale del bot, indipendente dal check del sito
+          if os.environ.get("FORCE_NOTIFY", "false").lower() == "true":
+              send_telegram("🧪 Test manuale: il bot Telegram funziona correttamente.")
+              print("Messaggio di test inviato.")
 
           with sync_playwright() as p:
               browser = p.chromium.launch(headless=True)
-              page = browser.new_page()
-
-              page.goto(
-                  url,
-                  wait_until="domcontentloaded",
-                  timeout=60000
+              context = browser.new_context(
+                  user_agent=(
+                      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                      "AppleWebKit/537.36 (KHTML, like Gecko) "
+                      "Chrome/124.0.0.0 Safari/537.36"
+                  ),
+                  viewport={"width": 1366, "height": 900},
+                  locale="it-IT",
               )
+              page = context.new_page()
+              page.goto(url, wait_until="domcontentloaded", timeout=60000)
 
-              page.wait_for_timeout(5000)
+              # aspetta che la rete si calmi (contenuto caricato via JS)
+              try:
+                  page.wait_for_load_state("networkidle", timeout=20000)
+              except Exception:
+                  pass
+
+              # prova a chiudere il banner cookie se presente
+              for selector in [
+                  "#onetrust-accept-btn-handler",
+                  "button:has-text('Accetta')",
+                  "button:has-text('Accept')",
+              ]:
+                  try:
+                      page.click(selector, timeout=3000)
+                      break
+                  except Exception:
+                      continue
+
+              page.wait_for_timeout(3000)
+
+              # screenshot per debug: lo trovi negli artifact della run
+              page.screenshot(path="debug_screenshot.png", full_page=True)
 
               text = page.locator("body").inner_text().lower()
 
-              available = "aggiungi al carrello" in text
+              positive = "aggiungi al carrello" in text
+              negative_signals = ["esaurito", "temporaneamente non disponibile", "sold out", "avvisami"]
+              negative = any(s in text for s in negative_signals)
 
-              if available:
-                  print("✅ THE END DISPONIBILE")
-              else:
-                  print("❌ THE END NON DISPONIBILE")
+              available = positive and not negative
+
+              print("Indicatore positivo trovato:", positive)
+              print("Indicatore negativo trovato:", negative)
+              print("✅ DISPONIBILE" if available else "❌ NON DISPONIBILE")
 
               state_file = "fossil_status.txt"
-
               try:
                   with open(state_file, "r") as f:
                       previous = f.read().strip()
@@ -63,47 +109,21 @@ jobs:
                   previous = "unknown"
 
               current = "available" if available else "soldout"
-
-              print(f"Stato precedente: {previous}")
-              print(f"Stato attuale: {current}")
+              print(f"Stato precedente: {previous} | Stato attuale: {current}")
 
               if previous == "available" and current == "soldout":
-
-                  message = (
-                      "🚨 FOSSIL THE END — POSSIBILE SOLD OUT!\n\n"
-                      "Il pulsante 'Aggiungi al carrello' non è più presente.\n\n"
-                      "Controlla subito:\n" + url
+                  send_telegram(
+                      "🚨 FOSSIL THE END — SOLD OUT!\n\n"
+                      "Il pulsante 'Aggiungi al carrello' non è più disponibile.\n\n"
+                      + url
                   )
-
-                  requests.post(
-                      f"https://api.telegram.org/bot{os.environ['BOT_TOKEN']}/sendMessage",
-                      data={
-                          "chat_id": os.environ["CHAT_ID"],
-                          "text": message
-                      },
-                      timeout=30
-                  )
-
-                  print("🚨 ALERT SENT")
-
+                  print("🚨 ALERT SOLD OUT INVIATO")
               elif previous == "soldout" and current == "available":
-
-                  message = (
+                  send_telegram(
                       "🟢 FOSSIL THE END — DISPONIBILE!\n\n"
-                      "Il pulsante 'Aggiungi al carrello' è nuovamente presente.\n\n"
                       "CORRI A CONTROLLARE:\n" + url
                   )
-
-                  requests.post(
-                      f"https://api.telegram.org/bot{os.environ['BOT_TOKEN']}/sendMessage",
-                      data={
-                          "chat_id": os.environ["CHAT_ID"],
-                          "text": message
-                      },
-                      timeout=30
-                  )
-
-                  print("🟢 RESTOCK ALERT SENT")
+                  print("🟢 ALERT RESTOCK INVIATO")
 
               with open(state_file, "w") as f:
                   f.write(current)
@@ -111,13 +131,17 @@ jobs:
               browser.close()
           PY
 
+      - name: Upload debug screenshot
+        uses: actions/upload-artifact@v4
+        with:
+          name: debug-screenshot
+          path: debug_screenshot.png
+          retention-days: 3
+
       - name: Save status
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-
           git add fossil_status.txt
-
           git diff --cached --quiet || git commit -m "Update Fossil stock status"
-
           git push
