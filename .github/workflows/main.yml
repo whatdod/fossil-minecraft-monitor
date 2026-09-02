@@ -2,7 +2,7 @@ name: Fossil Minecraft Monitor
 
 on:
   schedule:
-    - cron: "2,17,32,47 * * * *"
+    - cron: "2,17,36,47 * * * *"
   workflow_dispatch:
     inputs:
       force_notify:
