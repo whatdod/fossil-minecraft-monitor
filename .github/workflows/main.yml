@@ -1,15 +1,57 @@
-name: Get Telegram Chat ID
+name: Fossil Minecraft Monitor
 
 on:
+  schedule:
+    - cron: "*/15 * * * *"
   workflow_dispatch:
 
 jobs:
-  get-chat-id:
+  monitor:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Get Telegram updates
+      - name: Install dependencies
+        run: pip install requests beautifulsoup4
+
+      - name: Check Fossil The End
         env:
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+          CHAT_ID: ${{ secrets.CHAT_ID }}
         run: |
-          curl -s "https://api.telegram.org/bot${BOT_TOKEN}/getUpdates"
+          python - <<'PY'
+          import os
+          import requests
+          from bs4 import BeautifulSoup
+
+          url = "https://www.fossil.com/it-it/products/cronografo-minecraft-x-fossil-the-end-44-mm-in-edizione-limitata/LE1252.html"
+
+          r = requests.get(
+              url,
+              headers={"User-Agent": "Mozilla/5.0"},
+              timeout=30
+          )
+
+          soup = BeautifulSoup(r.text, "html.parser")
+          text = soup.get_text(" ", strip=True)
+
+          if "Aggiungi al carrello" not in text:
+              message = (
+                  "🚨 FOSSIL THE END — POSSIBILE SOLD OUT!\n\n"
+                  "Il pulsante 'Aggiungi al carrello' non è più "
+                  "presente sulla pagina Fossil.\n\n"
+                  "Controlla subito:\n" + url
+              )
+
+              requests.post(
+                  f"https://api.telegram.org/bot{os.environ['BOT_TOKEN']}/sendMessage",
+                  data={
+                      "chat_id": os.environ["CHAT_ID"],
+                      "text": message
+                  },
+                  timeout=30
+              )
+
+              print("ALERT SENT")
+          else:
+              print("The End ancora disponibile.")
+          PY
