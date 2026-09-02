@@ -8,7 +8,33 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Test
+      - name: Install Playwright
         run: |
-          echo "NUOVO WORKFLOW TEST"
-          echo "Se vedi questo messaggio, GitHub sta usando il file corretto."
+          pip install playwright
+          playwright install --with-deps chromium
+
+      - name: Check Fossil page
+        run: |
+          python - <<'PY'
+          from playwright.sync_api import sync_playwright
+
+          url = "https://www.fossil.com/it-it/products/cronografo-minecraft-x-fossil-the-end-44-mm-in-edizione-limitata/LE1252.html"
+
+          with sync_playwright() as p:
+              browser = p.chromium.launch(headless=True)
+              page = browser.new_page()
+
+              page.goto(url, wait_until="networkidle", timeout=60000)
+              page.wait_for_timeout(5000)
+
+              text = page.locator("body").inner_text()
+
+              if "aggiungi al carrello" in text.lower():
+                  print("✅ TROVATO: Aggiungi al carrello")
+                  print("✅ THE END RISULTA DISPONIBILE")
+              else:
+                  print("❌ NON TROVATO: Aggiungi al carrello")
+                  print("⚠️ NON possiamo ancora dire che sia sold out")
+
+              browser.close()
+          PY
