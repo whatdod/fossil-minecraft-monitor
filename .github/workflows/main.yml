@@ -1,10 +1,15 @@
-name: Fossil Minecraft Test
+name: Fossil Minecraft Monitor
 
 on:
+  schedule:
+    - cron: "*/15 * * * *"
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
-  test:
+  monitor:
     runs-on: ubuntu-latest
 
     steps:
@@ -13,9 +18,14 @@ jobs:
           pip install playwright
           playwright install --with-deps chromium
 
-      - name: Check Fossil page
+      - name: Check Fossil The End
+        env:
+          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+          CHAT_ID: ${{ secrets.CHAT_ID }}
         run: |
           python - <<'PY'
+          import os
+          import requests
           from playwright.sync_api import sync_playwright
 
           url = "https://www.fossil.com/it-it/products/cronografo-minecraft-x-fossil-the-end-44-mm-in-edizione-limitata/LE1252.html"
@@ -24,17 +34,90 @@ jobs:
               browser = p.chromium.launch(headless=True)
               page = browser.new_page()
 
-              page.goto(url, wait_until="domcontentloaded", timeout=60000)
+              page.goto(
+                  url,
+                  wait_until="domcontentloaded",
+                  timeout=60000
+              )
+
               page.wait_for_timeout(5000)
 
-              text = page.locator("body").inner_text()
+              text = page.locator("body").inner_text().lower()
 
-              if "aggiungi al carrello" in text.lower():
-                  print("✅ TROVATO: Aggiungi al carrello")
-                  print("✅ THE END RISULTA DISPONIBILE")
+              available = "aggiungi al carrello" in text
+
+              if available:
+                  print("✅ THE END DISPONIBILE")
               else:
-                  print("❌ NON TROVATO: Aggiungi al carrello")
-                  print("⚠️ NON possiamo ancora dire che sia sold out")
+                  print("❌ THE END NON DISPONIBILE")
+
+              # Leggiamo lo stato precedente da GitHub
+              state_file = "fossil_status.txt"
+
+              try:
+                  with open(state_file, "r") as f:
+                      previous = f.read().strip()
+              except FileNotFoundError:
+                  previous = "unknown"
+
+              current = "available" if available else "soldout"
+
+              print(f"Stato precedente: {previous}")
+              print(f"Stato attuale: {current}")
+
+              # Avvisa SOLO quando cambia da disponibile a non disponibile
+              if previous == "available" and current == "soldout":
+
+                  message = (
+                      "🚨 FOSSIL THE END — POSSIBILE SOLD OUT!\n\n"
+                      "Il pulsante 'Aggiungi al carrello' non è più presente.\n\n"
+                      "Controlla subito:\n" + url
+                  )
+
+                  requests.post(
+                      f"https://api.telegram.org/bot{os.environ['BOT_TOKEN']}/sendMessage",
+                      data={
+                          "chat_id": os.environ["CHAT_ID"],
+                          "text": message
+                      },
+                      timeout=30
+                  )
+
+                  print("🚨 ALERT SENT")
+
+              elif previous == "soldout" and current == "available":
+
+                  message = (
+                      "🟢 FOSSIL THE END — DISPONIBILE!\n\n"
+                      "Il pulsante 'Aggiungi al carrello' è nuovamente presente.\n\n"
+                      "CORRI A CONTROLLARE:\n" + url
+                  )
+
+                  requests.post(
+                      f"https://api.telegram.org/bot{os.environ['BOT_TOKEN']}/sendMessage",
+                      data={
+                          "chat_id": os.environ["CHAT_ID"],
+                          "text": message
+                      },
+                      timeout=30
+                  )
+
+                  print("🟢 RESTOCK ALERT SENT")
+
+              # Salviamo lo stato attuale
+              with open(state_file, "w") as f:
+                  f.write(current)
 
               browser.close()
           PY
+
+      - name: Save status
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git add fossil_status.txt
+
+          git diff --cached --quiet || git commit -m "Update Fossil stock status"
+
+          git push
