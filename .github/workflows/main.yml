@@ -1,41 +1,14 @@
-name: Fossil Minecraft Monitor
+name: Fossil Minecraft Test
 
 on:
   workflow_dispatch:
 
 jobs:
-  monitor:
+  test:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Test disponibilità The End
-        env:
-          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
-          CHAT_ID: ${{ secrets.CHAT_ID }}
+      - name: Test
         run: |
-          python - <<'PY'
-          import requests
-          from bs4 import BeautifulSoup
-
-          url = "https://www.fossil.com/it-it/products/cronografo-minecraft-x-fossil-the-end-44-mm-in-edizione-limitata/LE1252.html"
-
-          r = requests.get(
-              url,
-              headers={"User-Agent": "Mozilla/5.0"},
-              timeout=30
-          )
-
-          soup = BeautifulSoup(r.text, "html.parser")
-          text = soup.get_text(" ", strip=True)
-
-          print("=== CONTROLLO PAGINA ===")
-
-          if "aggiungi al carrello" in text.lower():
-              print("✅ TROVATO: Aggiungi al carrello")
-              print("The End risulta DISPONIBILE")
-          else:
-              print("❌ NON TROVATO: Aggiungi al carrello")
-              print("ATTENZIONE: questo NON significa necessariamente sold out")
-
-          print("========================")
-          PY
+          echo "NUOVO WORKFLOW TEST"
+          echo "Se vedi questo messaggio, GitHub sta usando il file corretto."
