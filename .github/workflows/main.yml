@@ -1,8 +1,6 @@
 name: Fossil Minecraft Monitor
 
 on:
-  schedule:
-    - cron: "*/15 * * * *"
   workflow_dispatch:
 
 jobs:
@@ -10,16 +8,12 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Install dependencies
-        run: pip install requests beautifulsoup4
-
-      - name: Check Fossil The End
+      - name: Test disponibilità The End
         env:
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
           CHAT_ID: ${{ secrets.CHAT_ID }}
         run: |
           python - <<'PY'
-          import os
           import requests
           from bs4 import BeautifulSoup
 
@@ -34,24 +28,14 @@ jobs:
           soup = BeautifulSoup(r.text, "html.parser")
           text = soup.get_text(" ", strip=True)
 
-          if "Aggiungi al carrello" not in text:
-              message = (
-                  "🚨 FOSSIL THE END — POSSIBILE SOLD OUT!\n\n"
-                  "Il pulsante 'Aggiungi al carrello' non è più "
-                  "presente sulla pagina Fossil.\n\n"
-                  "Controlla subito:\n" + url
-              )
+          print("=== CONTROLLO PAGINA ===")
 
-              requests.post(
-                  f"https://api.telegram.org/bot{os.environ['BOT_TOKEN']}/sendMessage",
-                  data={
-                      "chat_id": os.environ["CHAT_ID"],
-                      "text": message
-                  },
-                  timeout=30
-              )
-
-              print("ALERT SENT")
+          if "aggiungi al carrello" in text.lower():
+              print("✅ TROVATO: Aggiungi al carrello")
+              print("The End risulta DISPONIBILE")
           else:
-              print("The End ancora disponibile.")
+              print("❌ NON TROVATO: Aggiungi al carrello")
+              print("ATTENZIONE: questo NON significa necessariamente sold out")
+
+          print("========================")
           PY
