@@ -2,16 +2,13 @@ name: Fossil Minecraft Monitor
 
 on:
   schedule:
-    - cron: "3,18,33,48 * * * *"
+    - cron: "3/5 * * * *"
   workflow_dispatch:
     inputs:
       force_notify:
         description: "Invia un messaggio di test su Telegram"
         required: false
         default: "false"
-  push:
-    branches:
-      - main
 
 permissions:
   contents: write
