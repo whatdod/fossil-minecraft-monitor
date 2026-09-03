@@ -4,9 +4,8 @@ import json
 import html
 import statistics
 from datetime import datetime, timezone
-from urllib.parse import quote_plus, urlparse, parse_qs, unquote
+from urllib.parse import quote_plus, urlparse
 from zoneinfo import ZoneInfo
-import xml.etree.ElementTree as ET
 
 import requests
 from bs4 import BeautifulSoup
@@ -25,33 +24,30 @@ REPORT_STATE_FILE = "report_state.json"
 
 ITALY_TZ = ZoneInfo("Europe/Rome")
 
-TIMEOUT = 25
+TIMEOUT = 30
 
 HEADERS = {
     "User-Agent": (
-        "Mozilla/5.0 (X11; Linux x86_64) "
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
         "AppleWebKit/537.36 "
         "(KHTML, like Gecko) "
         "Chrome/128.0 Safari/537.36"
-    )
+    ),
+    "Accept-Language": "it-IT,it;q=0.9,en-US;q=0.8,en;q=0.7",
 }
 
 
 # ============================================================
-# QUERY
-# SOLO MINECRAFT x FOSSIL
+# RICERCHE
 # ============================================================
 
-QUERIES = [
+SEARCHES = [
+    "LE1252",
+    '"Fossil Minecraft" watch',
+    '"Minecraft Fossil" watch',
     '"Minecraft x Fossil"',
     '"Fossil x Minecraft"',
-    '"Minecraft Fossil" watch',
-    '"Fossil Minecraft" watch',
-    '"Minecraft x Fossil" watch',
-    '"Fossil Minecraft" LE1252',
-    '"LE1252"',
-    '"Fossil LE1252"',
-    '"Minecraft Fossil" "The End"',
+    '"Fossil Minecraft" "The End"',
 ]
 
 
@@ -61,7 +57,6 @@ QUERIES = [
 
 EXCLUDED_BRANDS = [
     "louis vuitton",
-    "lv",
     "gucci",
     "prada",
     "chanel",
@@ -77,7 +72,6 @@ EXCLUDED_BRANDS = [
     "tag heuer",
     "tissot",
     "cartier",
-    "tommy hilfiger",
     "armani",
     "diesel",
     "versace",
@@ -89,21 +83,39 @@ EXCLUDED_BRANDS = [
 
 
 # ============================================================
-# JSON
+# FILE JSON
 # ============================================================
 
 def load_json(path, default):
+
     try:
-        with open(path, "r", encoding="utf-8") as f:
+
+        with open(
+            path,
+            "r",
+            encoding="utf-8"
+        ) as f:
+
             return json.load(f)
-    except (FileNotFoundError, json.JSONDecodeError):
+
+    except (
+        FileNotFoundError,
+        json.JSONDecodeError
+    ):
+
         return default
 
 
 def save_json(path, data):
+
     temp_path = path + ".tmp"
 
-    with open(temp_path, "w", encoding="utf-8") as f:
+    with open(
+        temp_path,
+        "w",
+        encoding="utf-8"
+    ) as f:
+
         json.dump(
             data,
             f,
@@ -111,7 +123,10 @@ def save_json(path, data):
             indent=2
         )
 
-    os.replace(temp_path, path)
+    os.replace(
+        temp_path,
+        path
+    )
 
 
 # ============================================================
@@ -121,13 +136,17 @@ def save_json(path, data):
 def send_telegram(message):
 
     response = requests.post(
-        f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",
+
+        f"https://api.telegram.org/"
+        f"bot{BOT_TOKEN}/sendMessage",
+
         data={
             "chat_id": CHAT_ID,
             "text": message,
             "disable_web_page_preview": False
         },
-        timeout=TIMEOUT,
+
+        timeout=TIMEOUT
     )
 
     response.raise_for_status()
@@ -151,73 +170,68 @@ def normalize_url(url):
     if not url:
         return ""
 
-    url = html.unescape(url).strip()
-
-    # DuckDuckGo può restituire URL di redirect.
-    # Proviamo a recuperare il vero URL.
-    try:
-        parsed = urlparse(url)
-
-        query = parse_qs(parsed.query)
-
-        if "uddg" in query:
-            url = unquote(query["uddg"][0])
-
-    except Exception:
-        pass
+    url = html.unescape(
+        url
+    ).strip()
 
     parsed = urlparse(url)
 
-    if parsed.scheme not in ("http", "https"):
-        return url
+    if parsed.scheme not in (
+        "http",
+        "https"
+    ):
+        return ""
 
     return (
-        f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
-        + (f"?{parsed.query}" if parsed.query else "")
+        f"{parsed.scheme}://"
+        f"{parsed.netloc}"
+        f"{parsed.path}"
     )
 
 
 # ============================================================
-# FILTRO COLLEZIONE
+# FILTRO MINECRAFT × FOSSIL
 # ============================================================
 
-def is_relevant(title, description="", url=""):
+def is_relevant(
+    title,
+    description="",
+    url=""
+):
 
-    title = clean_text(title)
-    description = clean_text(description)
-
-    combined = clean_text(
+    text = clean_text(
         f"{title} {description} {url}"
     ).lower()
 
     compact = re.sub(
         r"[^a-z0-9]",
         "",
-        combined
+        text
     )
 
     # --------------------------------------------------------
-    # 1. ESCLUSIONE BRAND PALESEMENTE ESTRANEI
+    # ESCLUSIONE ALTRI BRAND
     # --------------------------------------------------------
 
     for brand in EXCLUDED_BRANDS:
 
-        if brand in combined:
+        if brand in text:
 
-            # Se contiene LE1252 insieme al brand,
-            # diamo comunque priorità al codice prodotto.
+            # LE1252 ha priorità assoluta
             if "le1252" not in compact:
+
                 return False
 
     # --------------------------------------------------------
-    # 2. CODICE PRODOTTO ESATTO
+    # CODICE PRODOTTO
     # --------------------------------------------------------
 
     if "le1252" in compact:
+
         return True
 
     # --------------------------------------------------------
-    # 3. RIFERIMENTI ESPLICITI ALLA COLLABORAZIONE
+    # RIFERIMENTI ESPLICITI ALLA COLLEZIONE
     # --------------------------------------------------------
 
     strong_patterns = [
@@ -230,9 +244,6 @@ def is_relevant(title, description="", url=""):
 
         r"minecraft\s+and\s+fossil",
         r"fossil\s+and\s+minecraft",
-
-        r"minecraft\s+with\s+fossil",
-        r"fossil\s+with\s+minecraft",
 
         r"minecraft\s+fossil\s+collection",
         r"fossil\s+minecraft\s+collection",
@@ -257,23 +268,29 @@ def is_relevant(title, description="", url=""):
 
         if re.search(
             pattern,
-            combined,
+            text,
             re.IGNORECASE
         ):
+
             return True
 
     # --------------------------------------------------------
-    # 4. COMBINAZIONE MOLTO SPECIFICA
+    # COMBINAZIONE SPECIFICA
     # --------------------------------------------------------
 
-    has_minecraft = "minecraft" in combined
-    has_fossil = "fossil" in combined
+    has_minecraft = (
+        "minecraft" in text
+    )
+
+    has_fossil = (
+        "fossil" in text
+    )
 
     collection_terms = [
+
         "the end",
         "ender dragon",
         "ender",
-        "creeper",
         "minecraft watch",
         "minecraft chrono",
         "minecraft chronograph",
@@ -281,20 +298,19 @@ def is_relevant(title, description="", url=""):
     ]
 
     has_collection_term = any(
-        term in combined
+        term in text
         for term in collection_terms
     )
 
     if (
         has_minecraft
-        and has_fossil
-        and has_collection_term
+        and
+        has_fossil
+        and
+        has_collection_term
     ):
-        return True
 
-    # --------------------------------------------------------
-    # 5. TUTTO IL RESTO VIENE SCARTATO
-    # --------------------------------------------------------
+        return True
 
     return False
 
@@ -308,7 +324,9 @@ def parse_price(text):
     if not text:
         return None, None
 
-    text = clean_text(text)
+    text = clean_text(
+        text
+    )
 
     patterns = [
 
@@ -325,7 +343,7 @@ def parse_price(text):
         ),
 
         (
-            r"(?:\$|USD)\s*"
+            r"(?:US\s*\$|\$|USD)\s*"
             r"([0-9]{1,5}(?:[.,][0-9]{1,2})?)",
             "USD"
         ),
@@ -350,513 +368,280 @@ def parse_price(text):
 
         raw = match.group(1)
 
-        if "," in raw and "." in raw:
-            raw = raw.replace(".", "")
-            raw = raw.replace(",", ".")
+        if (
+            "," in raw
+            and
+            "." in raw
+        ):
+
+            raw = raw.replace(
+                ".",
+                ""
+            )
+
+            raw = raw.replace(
+                ",",
+                "."
+            )
 
         elif "," in raw:
-            raw = raw.replace(",", ".")
+
+            raw = raw.replace(
+                ",",
+                "."
+            )
 
         try:
-            return float(raw), currency
+
+            return (
+                float(raw),
+                currency
+            )
 
         except ValueError:
-            pass
+
+            continue
 
     return None, None
 
 
 # ============================================================
-# AGGIUNTA RISULTATO
+# EBAY SOLD ITEMS
 # ============================================================
 
-def add_item(
-    items,
-    source,
-    title,
-    url,
-    price_text="",
-    description="",
-    item_id=None,
-    published=None,
-    kind="listing"
-):
+def search_ebay_sold():
 
-    title = clean_text(title)
-    description = clean_text(description)
+    items = []
 
-    url = normalize_url(url)
-
-    if not url:
-        return
-
-    if not title:
-        return
-
-    # FILTRO RIGIDO
-    if not is_relevant(
-        title,
-        description,
-        url
-    ):
-        print(
-            f"[SCARTATO] {title}"
-        )
-        return
-
-    price, currency = parse_price(
-        price_text
-        or f"{title} {description}"
-    )
-
-    stable_id = item_id or url
-
-    items.append({
-
-        "id": stable_id,
-
-        "source": source,
-
-        "title": title,
-
-        "url": url,
-
-        "price": price,
-
-        "currency": currency,
-
-        "kind": kind,
-
-        "published": published,
-    })
-
-
-# ============================================================
-# DUCKDUCKGO
-# ============================================================
-
-def search_duckduckgo(
-    query,
-    max_results=10
-):
-
-    results = []
-
-    url = (
-        "https://html.duckduckgo.com/html/?q="
-        + quote_plus(query)
-    )
-
-    try:
-
-        response = requests.get(
-            url,
-            headers=HEADERS,
-            timeout=TIMEOUT
-        )
-
-        response.raise_for_status()
-
-    except requests.RequestException as error:
+    for search in SEARCHES:
 
         print(
-            f"[web] ricerca fallita: {error}"
+            f"[eBay SOLD] Ricerca: {search}"
         )
 
-        return results
-
-    soup = BeautifulSoup(
-        response.text,
-        "html.parser"
-    )
-
-    for link in soup.select(
-        "a.result__a"
-    )[:max_results]:
-
-        title = clean_text(
-            link.get_text(
-                " ",
-                strip=True
-            )
+        # LH_Sold=1 = Sold Items
+        url = (
+            "https://www.ebay.com/sch/i.html?"
+            "_nkw="
+            + quote_plus(search)
+            + "&LH_Sold=1"
+            + "&LH_Complete=1"
+            + "&_sop=13"
         )
 
-        href = link.get(
-            "href",
-            ""
-        )
+        try:
 
-        parent = link.find_parent(
-            "div",
-            class_="result"
-        )
-
-        snippet = ""
-
-        if parent:
-
-            snippet_element = parent.select_one(
-                ".result__snippet"
+            response = requests.get(
+                url,
+                headers=HEADERS,
+                timeout=TIMEOUT
             )
 
-            if snippet_element:
+            response.raise_for_status()
 
-                snippet = clean_text(
-                    snippet_element.get_text(
+        except requests.RequestException as error:
+
+            print(
+                f"[eBay SOLD] errore: {error}"
+            )
+
+            continue
+
+        soup = BeautifulSoup(
+            response.text,
+            "html.parser"
+        )
+
+        # ----------------------------------------------------
+        # RISULTATI EBAY
+        # ----------------------------------------------------
+
+        results = soup.select(
+            "li.s-item"
+        )
+
+        print(
+            f"[eBay SOLD] "
+            f"Risultati pagina: {len(results)}"
+        )
+
+        for result in results:
+
+            title_element = result.select_one(
+                ".s-item__title"
+            )
+
+            link_element = result.select_one(
+                "a.s-item__link"
+            )
+
+            price_element = result.select_one(
+                ".s-item__price"
+            )
+
+            if not title_element:
+                continue
+
+            if not link_element:
+                continue
+
+            title = clean_text(
+                title_element.get_text(
+                    " ",
+                    strip=True
+                )
+            )
+
+            # eBay può inserire "Shop on eBay"
+            # come primo risultato
+            if title.lower() in (
+                "shop on ebay",
+                "shop on eBay".lower()
+            ):
+                continue
+
+            url_item = normalize_url(
+                link_element.get(
+                    "href",
+                    ""
+                )
+            )
+
+            price_text = ""
+
+            if price_element:
+
+                price_text = clean_text(
+                    price_element.get_text(
                         " ",
                         strip=True
                     )
                 )
 
-        add_item(
-            results,
-            "Web",
-            title,
-            href,
-            description=snippet,
-            kind="web"
-        )
+            # ------------------------------------------------
+            # CONTROLLO STATO VENDUTO
+            # ------------------------------------------------
 
-    return results
-
-
-def search_web():
-
-    items = []
-
-    for query in QUERIES:
-
-        searches = [
-
-            query,
-
-            f"site:ebay.com {query}",
-            f"site:ebay.it {query}",
-
-            f"site:vinted.it {query}",
-            f"site:vinted.com {query}",
-
-            f"site:reddit.com {query}",
-
-            f"{query} release",
-            f"{query} collection",
-            f"{query} sale",
-            f"{query} restock",
-
-        ]
-
-        for search_query in searches:
-
-            items.extend(
-                search_duckduckgo(
-                    search_query,
-                    max_results=8
+            result_text = clean_text(
+                result.get_text(
+                    " ",
+                    strip=True
                 )
-            )
+            ).lower()
 
-    return dedupe_items(items)
+            sold_indicator = (
 
+                "sold"
+                in result_text
 
-# ============================================================
-# REDDIT
-# ============================================================
-
-def search_reddit():
-
-    items = []
-
-    queries = [
-        '"Minecraft x Fossil"',
-        '"Fossil x Minecraft"',
-        '"LE1252"',
-        '"Fossil Minecraft"',
-    ]
-
-    for query in queries:
-
-        rss_url = (
-            "https://www.reddit.com/search.rss"
-            "?q="
-            + quote_plus(query)
-            + "&sort=new&t=month"
-        )
-
-        try:
-
-            response = requests.get(
-                rss_url,
-                headers={
-                    **HEADERS,
-                    "Accept": "application/rss+xml"
-                },
-                timeout=TIMEOUT
-            )
-
-            response.raise_for_status()
-
-            root = ET.fromstring(
-                response.text
-            )
-
-        except Exception as error:
-
-            print(
-                f"[reddit] ricerca fallita: {error}"
-            )
-
-            continue
-
-        namespace = {
-            "atom":
-            "http://www.w3.org/2005/Atom"
-        }
-
-        for entry in root.findall(
-            "atom:entry",
-            namespace
-        ):
-
-            title = entry.findtext(
-                "atom:title",
-                default="",
-                namespaces=namespace
-            )
-
-            link_element = entry.find(
-                "atom:link",
-                namespace
-            )
-
-            link = ""
-
-            if link_element is not None:
-
-                link = link_element.get(
-                    "href",
-                    ""
-                )
-
-            summary = entry.findtext(
-                "atom:content",
-                default="",
-                namespaces=namespace
-            )
-
-            published = entry.findtext(
-                "atom:updated",
-                default="",
-                namespaces=namespace
-            )
-
-            description = BeautifulSoup(
-                summary,
-                "html.parser"
-            ).get_text(" ")
-
-            add_item(
-                items,
-                "Reddit",
-                title,
-                link,
-                description=description,
-                published=published,
-                kind="discussion"
-            )
-
-    return dedupe_items(items)
-
-
-# ============================================================
-# EBAY API
-# ============================================================
-
-def ebay_access_token():
-
-    client_id = os.environ.get(
-        "EBAY_CLIENT_ID"
-    )
-
-    client_secret = os.environ.get(
-        "EBAY_CLIENT_SECRET"
-    )
-
-    if not client_id or not client_secret:
-
-        print(
-            "[eBay] API non configurata."
-        )
-
-        return None
-
-    try:
-
-        response = requests.post(
-
-            "https://api.ebay.com/"
-            "identity/v1/oauth2/token",
-
-            headers={
-                "Content-Type":
-                "application/x-www-form-urlencoded"
-            },
-
-            auth=requests.auth.HTTPBasicAuth(
-                client_id,
-                client_secret
-            ),
-
-            data={
-                "grant_type":
-                "client_credentials",
-
-                "scope":
-                "https://api.ebay.com/"
-                "oauth/api_scope"
-            },
-
-            timeout=TIMEOUT
-        )
-
-        response.raise_for_status()
-
-        return response.json()["access_token"]
-
-    except Exception as error:
-
-        print(
-            f"[eBay] errore autenticazione: {error}"
-        )
-
-        return None
-
-
-def search_ebay():
-
-    token = ebay_access_token()
-
-    if not token:
-
-        print(
-            "[eBay] API non disponibile. "
-            "Verrà utilizzata la ricerca web."
-        )
-
-        return []
-
-    items = []
-
-    endpoint = (
-        "https://api.ebay.com/"
-        "buy/browse/v1/item_summary/search"
-    )
-
-    queries = [
-        '"Minecraft x Fossil"',
-        '"Fossil x Minecraft"',
-        "LE1252",
-        "Fossil Minecraft watch",
-    ]
-
-    for query in queries:
-
-        try:
-
-            response = requests.get(
-
-                endpoint,
-
-                headers={
-                    "Authorization":
-                    f"Bearer {token}",
-
-                    "X-EBAY-C-MARKETPLACE-ID":
-                    "EBAY_IT",
-
-                    "Accept":
-                    "application/json"
-                },
-
-                params={
-                    "q": query,
-                    "limit": 50
-                },
-
-                timeout=TIMEOUT
-            )
-
-            response.raise_for_status()
-
-            data = response.json()
-
-        except Exception as error:
-
-            print(
-                f"[eBay] ricerca fallita "
-                f"({query}): {error}"
-            )
-
-            continue
-
-        for result in data.get(
-            "itemSummaries",
-            []
-        ):
-
-            title = result.get(
-                "title",
-                ""
-            )
-
-            url = (
-                result.get("itemWebUrl")
                 or
-                result.get(
-                    "itemAffiliateWebUrl",
-                    ""
+
+                "venduto"
+                in result_text
+
+            )
+
+            if not sold_indicator:
+
+                print(
+                    f"[SCARTATO] "
+                    f"Non verificato come venduto: "
+                    f"{title}"
                 )
+
+                continue
+
+            # ------------------------------------------------
+            # CONTROLLO COLLEZIONE
+            # ------------------------------------------------
+
+            if not is_relevant(
+                title,
+                result_text,
+                url_item
+            ):
+
+                print(
+                    f"[SCARTATO] "
+                    f"Non Minecraft × Fossil: "
+                    f"{title}"
+                )
+
+                continue
+
+            # ------------------------------------------------
+            # PREZZO
+            # ------------------------------------------------
+
+            price, currency = parse_price(
+                price_text
             )
 
-            item_id = result.get(
-                "itemId"
+            # Se non abbiamo un prezzo verificabile,
+            # NON notifichiamo.
+            if price is None:
+
+                print(
+                    f"[SCARTATO] "
+                    f"Prezzo non verificabile: "
+                    f"{title}"
+                )
+
+                continue
+
+            # ------------------------------------------------
+            # ID
+            # ------------------------------------------------
+
+            item_id = ""
+
+            data_view = result.get(
+                "data-view"
             )
 
-            price = result.get(
-                "price",
-                {}
-            )
+            if data_view:
 
-            price_text = (
-                f"{price.get('currency', '')} "
-                f"{price.get('value', '')}"
-            )
+                item_id = data_view
 
-            add_item(
+            if not item_id:
 
-                items,
+                item_id = url_item
 
+            items.append({
+
+                "id":
+                f"ebay-sold:{item_id}",
+
+                "source":
                 "eBay",
 
+                "title":
                 title,
 
-                url,
+                "url":
+                url_item,
 
-                price_text=price_text,
+                "price":
+                price,
 
-                description=result.get(
-                    "shortDescription",
-                    ""
-                ),
+                "currency":
+                currency,
 
-                item_id=(
-                    f"ebay:{item_id}"
-                    if item_id
-                    else None
-                ),
+                "kind":
+                "sold",
 
-                kind="listing"
-            )
+                "sold":
+                True,
 
-    return dedupe_items(items)
+                "found_at":
+                datetime.now(
+                    timezone.utc
+                ).isoformat()
+            })
+
+    return dedupe_items(
+        items
+    )
 
 
 # ============================================================
@@ -872,62 +657,46 @@ def dedupe_items(items):
     for item in items:
 
         key = (
-            item["id"]
+            item.get("id")
             or
-            item["url"]
+            item.get("url")
         )
 
         if key in seen:
+
             continue
 
-        seen.add(key)
+        seen.add(
+            key
+        )
 
-        output.append(item)
+        output.append(
+            item
+        )
 
     return output
 
 
 # ============================================================
-# CLASSIFICAZIONE FONTE
-# ============================================================
-
-def classify_source(item):
-
-    url = item["url"].lower()
-    source = item["source"].lower()
-
-    if (
-        "ebay." in url
-        or source == "ebay"
-    ):
-        return "eBay"
-
-    if "vinted." in url:
-        return "Vinted"
-
-    if (
-        "reddit.com" in url
-        or source == "reddit"
-    ):
-        return "Reddit"
-
-    return item["source"]
-
-
-# ============================================================
-# PREZZO
+# FORMATTAZIONE PREZZO
 # ============================================================
 
 def format_price(item):
 
-    price = item.get("price")
+    price = item.get(
+        "price"
+    )
+
+    currency = item.get(
+        "currency"
+    )
 
     if price is None:
-        return "Prezzo non rilevato"
 
-    currency = item.get("currency") or "?"
+        return "Prezzo non disponibile"
 
     symbols = {
+
         "EUR": "€",
         "USD": "$",
         "GBP": "£"
@@ -935,81 +704,46 @@ def format_price(item):
 
     symbol = symbols.get(
         currency,
-        currency + " "
+        currency or ""
     )
 
-    return f"{symbol}{price:.2f}"
+    return (
+        f"{symbol}"
+        f"{price:.2f}"
+    )
 
 
 # ============================================================
-# NOTIFICA
+# NOTIFICA VENDITA
 # ============================================================
 
-def send_new_item(item):
-
-    source = classify_source(item)
-
-    if item["kind"] == "discussion":
-
-        prefix = "📰 NUOVA DISCUSSIONE"
-
-    elif source == "eBay":
-
-        prefix = "🟢 NUOVA INSERZIONE"
-
-    elif source == "Vinted":
-
-        prefix = "🟢 NUOVO ANNUNCIO"
-
-    else:
-
-        prefix = "🔎 NUOVA SEGNALAZIONE"
+def send_sold_notification(item):
 
     message = (
 
-        f"{prefix}\n\n"
+        "🟢 MINECRAFT × FOSSIL — VENDUTO\n\n"
 
-        f"{source}: "
-        f"{item['title']}\n"
+        f"⌚ {item['title']}\n\n"
 
-        f"Prezzo: "
-        f"{format_price(item)}\n\n"
+        f"💰 PREZZO DI VENDITA: "
+        f"{format_price(item)}\n"
 
-        f"{item['url']}"
+        f"🛒 Marketplace: eBay\n\n"
+
+        f"🔗 {item['url']}"
     )
 
-    send_telegram(message)
+    send_telegram(
+        message
+    )
 
 
 # ============================================================
-# PREZZI EUR
+# STORICO VENDITE
 # ============================================================
 
-def collect_prices(items):
-
-    prices = []
-
-    for item in items:
-
-        if (
-            item.get("price") is not None
-            and
-            item.get("currency") == "EUR"
-        ):
-
-            prices.append(
-                float(item["price"])
-            )
-
-    return prices
-
-
-# ============================================================
-# STORICO
-# ============================================================
-
-def save_daily_history(
-    all_current_items,
+def save_sale_history(
+    items,
     now
 ):
 
@@ -1018,53 +752,63 @@ def save_daily_history(
         {}
     )
 
-    date_key = now.date().isoformat()
+    date_key = (
+        now.date().isoformat()
+    )
 
-    grouped = {}
+    if date_key not in history:
 
-    for item in all_current_items:
+        history[date_key] = []
 
-        source = classify_source(item)
+    for item in items:
 
-        grouped.setdefault(
-            source,
-            []
-        )
+        history[date_key].append({
 
-        if (
-            item.get("price") is not None
-            and
-            item.get("currency") == "EUR"
-        ):
+            "id":
+            item["id"],
 
-            grouped[source].append(
-                item["price"]
-            )
+            "title":
+            item["title"],
 
-    snapshot = {}
+            "price":
+            item["price"],
 
-    for source, prices in grouped.items():
+            "currency":
+            item["currency"],
 
-        if prices:
+            "source":
+            "eBay",
 
-            snapshot[source] = {
-                "count": len(prices),
-                "min": min(prices),
-                "max": max(prices),
-                "average": statistics.mean(prices)
-            }
+            "url":
+            item["url"]
+        })
 
-        else:
+    # --------------------------------------------------------
+    # Evita duplicati nello storico
+    # --------------------------------------------------------
 
-            snapshot[source] = {
-                "count": 0
-            }
+    unique = {}
 
-    history[date_key] = snapshot
+    for sale in history[date_key]:
 
-    keys = sorted(history.keys())
+        unique[
+            sale["id"]
+        ] = sale
 
-    for key in keys[:-90]:
+    history[date_key] = list(
+        unique.values()
+    )
+
+    # --------------------------------------------------------
+    # Mantieni 180 giorni
+    # --------------------------------------------------------
+
+    keys = sorted(
+        history.keys()
+    )
+
+    for key in keys[:-180]:
+
         del history[key]
 
     save_json(
@@ -1076,198 +820,84 @@ def save_daily_history(
 
 
 # ============================================================
-# VARIAZIONE
-# ============================================================
-
-def pct_change(
-    current,
-    previous
-):
-
-    if (
-        previous in (None, 0)
-        or
-        current is None
-    ):
-        return None
-
-    return (
-        (current - previous)
-        / previous
-    ) * 100
-
-
-# ============================================================
-# REPORT
+# REPORT GIORNALIERO
 # ============================================================
 
 def build_daily_report(
-    all_items,
-    new_items,
+    today_sales,
     now,
     history
 ):
 
-    yesterday = (
-        now.date()
-        .fromordinal(
-            now.date().toordinal() - 1
+    prices = [
+
+        sale["price"]
+
+        for sale in today_sales
+
+        if (
+            sale.get("price")
+            is not None
+            and
+            sale.get("currency")
+            == "EUR"
         )
-        .isoformat()
-    )
-
-    sources = {}
-
-    for item in all_items:
-
-        source = classify_source(item)
-
-        sources.setdefault(
-            source,
-            []
-        ).append(item)
+    ]
 
     lines = [
-        "📊 LE1252 MARKET REPORT "
-        f"— {now.strftime('%d/%m/%Y')}",
+
+        "📊 MINECRAFT × FOSSIL "
+        "— MARKET REPORT",
+
+        f"📅 {now.strftime('%d/%m/%Y')}",
+
         ""
     ]
 
-    for source in [
-        "eBay",
-        "Vinted",
-        "Reddit",
-        "Web"
-    ]:
+    if not prices:
 
-        results = sources.get(
-            source,
-            []
+        lines.append(
+            "Nessuna vendita verificata "
+            "rilevata oggi."
         )
-
-        if source == "Reddit":
-
-            lines.append(
-                f"Reddit: "
-                f"{len(results)} "
-                f"discussioni rilevanti"
-            )
-
-            continue
-
-        prices = [
-            item["price"]
-            for item in results
-            if (
-                item.get("price") is not None
-                and
-                item.get("currency") == "EUR"
-            )
-        ]
-
-        if prices:
-
-            lines.append(
-                f"{source}: "
-                f"{len(results)} risultati | "
-                f"min €{min(prices):.2f} | "
-                f"media €{statistics.mean(prices):.2f} | "
-                f"max €{max(prices):.2f}"
-            )
-
-        else:
-
-            lines.append(
-                f"{source}: "
-                f"{len(results)} risultati | "
-                "prezzi non rilevati"
-            )
-
-    new_today = [
-        item
-        for item in new_items
-        if classify_source(item)
-        in (
-            "eBay",
-            "Vinted",
-            "Web",
-            "Reddit"
-        )
-    ]
-
-    lines.append("")
-
-    lines.append(
-        f"🆕 Nuove segnalazioni oggi: "
-        f"{len(new_today)}"
-    )
-
-    today_prices = collect_prices(
-        all_items
-    )
-
-    yesterday_data = history.get(
-        yesterday,
-        {}
-    )
-
-    previous_averages = []
-
-    for data in yesterday_data.values():
-
-        if data.get("average") is not None:
-
-            previous_averages.append(
-                data["average"]
-            )
-
-    if (
-        today_prices
-        and
-        previous_averages
-    ):
-
-        today_average = statistics.mean(
-            today_prices
-        )
-
-        yesterday_average = statistics.mean(
-            previous_averages
-        )
-
-        change = pct_change(
-            today_average,
-            yesterday_average
-        )
-
-        if change is not None:
-
-            sign = (
-                "+"
-                if change >= 0
-                else ""
-            )
-
-            lines.append(
-                f"📈 Prezzo medio vs ieri: "
-                f"{sign}{change:.1f}%"
-            )
 
     else:
 
         lines.append(
-            "📈 Prezzo medio vs ieri: "
-            "dati storici insufficienti"
+            f"🛒 Vendite verificate: "
+            f"{len(prices)}"
+        )
+
+        lines.append(
+            f"💰 Minimo: "
+            f"€{min(prices):.2f}"
+        )
+
+        lines.append(
+            f"📊 Media: "
+            f"€{statistics.mean(prices):.2f}"
+        )
+
+        lines.append(
+            f"💎 Massimo: "
+            f"€{max(prices):.2f}"
         )
 
     lines.append("")
 
     lines.append(
-        "ℹ️ Il radar riguarda esclusivamente "
-        "la nuova collezione Minecraft × Fossil."
+        "ℹ️ Sono considerate solo vendite "
+        "verificate su eBay."
     )
 
-    return "\n".join(lines)
+    lines.append(
+        "Gli annunci ancora attivi "
+        "NON vengono conteggiati."
+    )
+
+    return "\n".join(
+        lines
+    )
 
 
 # ============================================================
@@ -1277,6 +907,7 @@ def build_daily_report(
 def should_send_daily_report(now):
 
     if now.hour < 18:
+
         return False
 
     state = load_json(
@@ -1285,8 +916,11 @@ def should_send_daily_report(now):
     )
 
     return (
-        state.get("last_report_date")
-        != now.date().isoformat()
+        state.get(
+            "last_report_date"
+        )
+        !=
+        now.date().isoformat()
     )
 
 
@@ -1320,17 +954,17 @@ def main():
     ):
 
         send_telegram(
-            "🧪 Test manuale: "
-            "LE1252 Market Radar "
+            "🧪 Test: "
+            "LE1252 Sold Market Radar "
             "funziona correttamente."
         )
 
         print(
-            "Messaggio di test Telegram inviato."
+            "Test Telegram inviato."
         )
 
     # --------------------------------------------------------
-    # ORA ITALIANA
+    # ORA
     # --------------------------------------------------------
 
     now = (
@@ -1343,7 +977,7 @@ def main():
     )
 
     print(
-        f"🕐 Radar LE1252: "
+        f"🕐 Radar vendite: "
         f"{now.isoformat()}"
     )
 
@@ -1360,99 +994,46 @@ def main():
         seen,
         dict
     ):
+
         seen = {}
 
     # --------------------------------------------------------
-    # RICERCA EBAY
+    # RICERCA
     # --------------------------------------------------------
 
     print(
-        "🔎 Ricerca eBay..."
+        "🔎 Cerco SOLO vendite "
+        "Minecraft × Fossil..."
     )
 
-    ebay_items = search_ebay()
-
-    print(
-        f"eBay: "
-        f"{len(ebay_items)} risultati rilevanti"
-    )
-
-    # --------------------------------------------------------
-    # RICERCA WEB
-    # --------------------------------------------------------
-
-    print(
-        "🔎 Ricerca web..."
-    )
-
-    web_items = search_web()
-
-    print(
-        f"Web: "
-        f"{len(web_items)} risultati rilevanti"
-    )
-
-    # --------------------------------------------------------
-    # RICERCA REDDIT
-    # --------------------------------------------------------
-
-    print(
-        "🔎 Ricerca Reddit..."
-    )
-
-    reddit_items = search_reddit()
-
-    print(
-        f"Reddit: "
-        f"{len(reddit_items)} risultati rilevanti"
-    )
-
-    # --------------------------------------------------------
-    # UNIONE
-    # --------------------------------------------------------
-
-    current = []
-
-    current.extend(
-        ebay_items
-    )
-
-    current.extend(
-        web_items
-    )
-
-    current.extend(
-        reddit_items
-    )
-
-    current = dedupe_items(
-        current
+    current_sales = (
+        search_ebay_sold()
     )
 
     print(
-        f"🔎 RISULTATI TOTALI "
-        f"MINECRAFT × FOSSIL: "
-        f"{len(current)}"
+        f"🟢 Vendite rilevanti "
+        f"trovate: "
+        f"{len(current_sales)}"
     )
 
     # --------------------------------------------------------
-    # NUOVI ELEMENTI
+    # NUOVE VENDITE
     # --------------------------------------------------------
 
-    new_items = []
+    new_sales = []
 
-    for item in current:
+    for sale in current_sales:
 
         key = (
-            item["id"]
+            sale["id"]
             or
-            item["url"]
+            sale["url"]
         )
 
         if key not in seen:
 
-            new_items.append(
-                item
+            new_sales.append(
+                sale
             )
 
             seen[key] = {
@@ -1460,37 +1041,42 @@ def main():
                 "first_seen":
                 now.isoformat(),
 
-                "source":
-                classify_source(item),
-
                 "title":
-                item["title"],
-
-                "url":
-                item["url"],
+                sale["title"],
 
                 "price":
-                item.get("price"),
+                sale["price"],
 
                 "currency":
-                item.get("currency")
+                sale["currency"],
+
+                "source":
+                "eBay",
+
+                "url":
+                sale["url"],
+
+                "sold":
+                True
             }
 
     # --------------------------------------------------------
     # NOTIFICHE
     # --------------------------------------------------------
 
-    for item in new_items:
+    for sale in new_sales:
 
         try:
 
-            send_new_item(
-                item
+            send_sold_notification(
+                sale
             )
 
             print(
-                f"🔔 Notificato: "
-                f"{item['title']}"
+                f"🔔 VENDITA NOTIFICATA: "
+                f"{sale['title']} "
+                f"— "
+                f"{format_price(sale)}"
             )
 
         except Exception as error:
@@ -1501,7 +1087,7 @@ def main():
             )
 
     # --------------------------------------------------------
-    # SALVA DATABASE
+    # SALVA VISTI
     # --------------------------------------------------------
 
     save_json(
@@ -1513,8 +1099,8 @@ def main():
     # STORICO
     # --------------------------------------------------------
 
-    history = save_daily_history(
-        current,
+    history = save_sale_history(
+        current_sales,
         now
     )
 
@@ -1522,13 +1108,25 @@ def main():
     # REPORT
     # --------------------------------------------------------
 
-    if should_send_daily_report(now):
+    if should_send_daily_report(
+        now
+    ):
 
         try:
 
+            today_key = (
+                now.date().isoformat()
+            )
+
+            today_sales = [
+                sale
+                for sale in current_sales
+                if sale.get("price")
+                is not None
+            ]
+
             report = build_daily_report(
-                current,
-                new_items,
+                today_sales,
                 now,
                 history
             )
@@ -1548,7 +1146,7 @@ def main():
         except Exception as error:
 
             print(
-                f"❌ Errore report Telegram: "
+                f"❌ Errore report: "
                 f"{error}"
             )
 
@@ -1557,10 +1155,15 @@ def main():
     # --------------------------------------------------------
 
     print(
-        f"🆕 Nuovi elementi trovati: "
-        f"{len(new_items)}"
+        f"🆕 Nuove vendite: "
+        f"{len(new_sales)}"
     )
 
 
+# ============================================================
+# AVVIO
+# ============================================================
+
 if __name__ == "__main__":
+
     main()
