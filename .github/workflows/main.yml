@@ -1,0 +1,66 @@
+name: LE1252 Market Radar
+
+on:
+  schedule:
+    - cron: "3,33 * * * *"
+  workflow_dispatch:
+    inputs:
+      force_notify:
+        description: "Invia un messaggio di test su Telegram"
+        required: false
+        default: "false"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: le1252-market-radar
+  cancel-in-progress: false
+
+jobs:
+  monitor:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install requests beautifulsoup4
+
+      - name: Run LE1252 radar
+        env:
+          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+          CHAT_ID: ${{ secrets.CHAT_ID }}
+          EBAY_CLIENT_ID: ${{ secrets.EBAY_CLIENT_ID }}
+          EBAY_CLIENT_SECRET: ${{ secrets.EBAY_CLIENT_SECRET }}
+        run: |
+          echo "🕐 Radar eseguito: $(date '+%Y-%m-%d %H:%M:%S UTC')"
+          if [ "${{ github.event.inputs.force_notify }}" = "true" ]; then
+            python - <<'PY'
+import os
+import requests
+r = requests.post(
+    f"https://api.telegram.org/bot{os.environ['BOT_TOKEN']}/sendMessage",
+    data={"chat_id": os.environ["CHAT_ID"], "text": "🧪 Test manuale: LE1252 Market Radar funziona correttamente."},
+    timeout=30,
+)
+r.raise_for_status()
+print("Messaggio di test inviato.")
+PY
+          fi
+          python monitor.py
+
+      - name: Save radar database
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add seen_items.json market_history.json report_state.json
+          if git diff --cached --quiet; then
+            echo "Nessuna modifica da salvare."
+          else
+            git commit -m "Update LE1252 radar data"
+            git push
+          fi
