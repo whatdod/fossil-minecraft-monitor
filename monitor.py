@@ -4,7 +4,7 @@ import json
 import html
 import statistics
 from datetime import datetime, timezone
-from urllib.parse import quote_plus, urlparse
+from urllib.parse import quote_plus, urlparse, parse_qs, unquote
 from zoneinfo import ZoneInfo
 import xml.etree.ElementTree as ET
 
@@ -38,19 +38,58 @@ HEADERS = {
 
 
 # ============================================================
-# QUERY DI RICERCA
+# QUERY
+# SOLO MINECRAFT x FOSSIL
 # ============================================================
 
 QUERIES = [
+    '"Minecraft x Fossil"',
+    '"Fossil x Minecraft"',
+    '"Minecraft Fossil" watch',
+    '"Fossil Minecraft" watch',
+    '"Minecraft x Fossil" watch',
+    '"Fossil Minecraft" LE1252',
     '"LE1252"',
     '"Fossil LE1252"',
-    '"Minecraft Fossil" "LE1252"',
-    '"Minecraft x Fossil" "The End"',
+    '"Minecraft Fossil" "The End"',
 ]
 
 
 # ============================================================
-# FILE JSON
+# PAROLE DA ESCLUDERE
+# ============================================================
+
+EXCLUDED_BRANDS = [
+    "louis vuitton",
+    "lv",
+    "gucci",
+    "prada",
+    "chanel",
+    "hermes",
+    "hermès",
+    "rolex",
+    "omega",
+    "seiko",
+    "casio",
+    "citizen",
+    "swatch",
+    "timex",
+    "tag heuer",
+    "tissot",
+    "cartier",
+    "tommy hilfiger",
+    "armani",
+    "diesel",
+    "versace",
+    "bulgari",
+    "breguet",
+    "patek philippe",
+    "audemars piguet",
+]
+
+
+# ============================================================
+# JSON
 # ============================================================
 
 def load_json(path, default):
@@ -114,6 +153,19 @@ def normalize_url(url):
 
     url = html.unescape(url).strip()
 
+    # DuckDuckGo può restituire URL di redirect.
+    # Proviamo a recuperare il vero URL.
+    try:
+        parsed = urlparse(url)
+
+        query = parse_qs(parsed.query)
+
+        if "uddg" in query:
+            url = unquote(query["uddg"][0])
+
+    except Exception:
+        pass
+
     parsed = urlparse(url)
 
     if parsed.scheme not in ("http", "https"):
@@ -126,41 +178,125 @@ def normalize_url(url):
 
 
 # ============================================================
-# RILEVANZA
+# FILTRO COLLEZIONE
 # ============================================================
 
-def is_relevant(title, description=""):
+def is_relevant(title, description="", url=""):
 
-    text = clean_text(
-        f"{title} {description}"
+    title = clean_text(title)
+    description = clean_text(description)
+
+    combined = clean_text(
+        f"{title} {description} {url}"
     ).lower()
 
-    compact = text.replace(" ", "")
+    compact = re.sub(
+        r"[^a-z0-9]",
+        "",
+        combined
+    )
 
-    # Identificatore esatto
+    # --------------------------------------------------------
+    # 1. ESCLUSIONE BRAND PALESEMENTE ESTRANEI
+    # --------------------------------------------------------
+
+    for brand in EXCLUDED_BRANDS:
+
+        if brand in combined:
+
+            # Se contiene LE1252 insieme al brand,
+            # diamo comunque priorità al codice prodotto.
+            if "le1252" not in compact:
+                return False
+
+    # --------------------------------------------------------
+    # 2. CODICE PRODOTTO ESATTO
+    # --------------------------------------------------------
+
     if "le1252" in compact:
         return True
 
-    watch_words = [
-        "fossil",
-        "watch",
-        "orologio",
-        "cronografo",
-        "chrono"
+    # --------------------------------------------------------
+    # 3. RIFERIMENTI ESPLICITI ALLA COLLABORAZIONE
+    # --------------------------------------------------------
+
+    strong_patterns = [
+
+        r"minecraft\s*x\s*fossil",
+        r"fossil\s*x\s*minecraft",
+
+        r"minecraft\s+×\s+fossil",
+        r"fossil\s+×\s+minecraft",
+
+        r"minecraft\s+and\s+fossil",
+        r"fossil\s+and\s+minecraft",
+
+        r"minecraft\s+with\s+fossil",
+        r"fossil\s+with\s+minecraft",
+
+        r"minecraft\s+fossil\s+collection",
+        r"fossil\s+minecraft\s+collection",
+
+        r"minecraft\s+fossil\s+watch",
+        r"fossil\s+minecraft\s+watch",
+
+        r"minecraft\s+fossil\s+chrono",
+        r"fossil\s+minecraft\s+chrono",
+
+        r"minecraft\s+fossil\s+chronograph",
+        r"fossil\s+minecraft\s+chronograph",
+
+        r"minecraft\s+fossil\s+the\s+end",
+        r"fossil\s+minecraft\s+the\s+end",
+
+        r"minecraft\s+fossil\s+ender",
+        r"fossil\s+minecraft\s+ender",
     ]
 
-    minecraft_words = [
-        "minecraft",
+    for pattern in strong_patterns:
+
+        if re.search(
+            pattern,
+            combined,
+            re.IGNORECASE
+        ):
+            return True
+
+    # --------------------------------------------------------
+    # 4. COMBINAZIONE MOLTO SPECIFICA
+    # --------------------------------------------------------
+
+    has_minecraft = "minecraft" in combined
+    has_fossil = "fossil" in combined
+
+    collection_terms = [
         "the end",
+        "ender dragon",
         "ender",
-        "ender dragon"
+        "creeper",
+        "minecraft watch",
+        "minecraft chrono",
+        "minecraft chronograph",
+        "minecraft collection",
     ]
 
-    return (
-        any(word in text for word in watch_words)
-        and
-        any(word in text for word in minecraft_words)
+    has_collection_term = any(
+        term in combined
+        for term in collection_terms
     )
+
+    if (
+        has_minecraft
+        and has_fossil
+        and has_collection_term
+    ):
+        return True
+
+    # --------------------------------------------------------
+    # 5. TUTTO IL RESTO VIENE SCARTATO
+    # --------------------------------------------------------
+
+    return False
 
 
 # ============================================================
@@ -176,7 +312,6 @@ def parse_price(text):
 
     patterns = [
 
-        # Euro
         (
             r"(?:€|EUR)\s*"
             r"([0-9]{1,5}(?:[.,][0-9]{1,2})?)",
@@ -189,11 +324,16 @@ def parse_price(text):
             "EUR"
         ),
 
-        # Dollari
         (
             r"(?:\$|USD)\s*"
             r"([0-9]{1,5}(?:[.,][0-9]{1,2})?)",
             "USD"
+        ),
+
+        (
+            r"(?:£|GBP)\s*"
+            r"([0-9]{1,5}(?:[.,][0-9]{1,2})?)",
+            "GBP"
         ),
     ]
 
@@ -253,10 +393,15 @@ def add_item(
     if not title:
         return
 
+    # FILTRO RIGIDO
     if not is_relevant(
         title,
-        description
+        description,
+        url
     ):
+        print(
+            f"[SCARTATO] {title}"
+        )
         return
 
     price, currency = parse_price(
@@ -287,7 +432,7 @@ def add_item(
 
 
 # ============================================================
-# RICERCA WEB
+# DUCKDUCKGO
 # ============================================================
 
 def search_duckduckgo(
@@ -386,16 +531,17 @@ def search_web():
             query,
 
             f"site:ebay.com {query}",
-
             f"site:ebay.it {query}",
 
             f"site:vinted.it {query}",
-
             f"site:vinted.com {query}",
 
             f"site:reddit.com {query}",
 
-            f"{query} watch forum",
+            f"{query} release",
+            f"{query} collection",
+            f"{query} sale",
+            f"{query} restock",
 
         ]
 
@@ -420,8 +566,10 @@ def search_reddit():
     items = []
 
     queries = [
-        "LE1252",
-        '"Fossil" "Minecraft" watch'
+        '"Minecraft x Fossil"',
+        '"Fossil x Minecraft"',
+        '"LE1252"',
+        '"Fossil Minecraft"',
     ]
 
     for query in queries:
@@ -500,25 +648,20 @@ def search_reddit():
                 namespaces=namespace
             )
 
-            if is_relevant(
+            description = BeautifulSoup(
+                summary,
+                "html.parser"
+            ).get_text(" ")
+
+            add_item(
+                items,
+                "Reddit",
                 title,
-                summary
-            ):
-
-                description = BeautifulSoup(
-                    summary,
-                    "html.parser"
-                ).get_text(" ")
-
-                add_item(
-                    items,
-                    "Reddit",
-                    title,
-                    link,
-                    description=description,
-                    published=published,
-                    kind="discussion"
-                )
+                link,
+                description=description,
+                published=published,
+                kind="discussion"
+            )
 
     return dedupe_items(items)
 
@@ -608,9 +751,10 @@ def search_ebay():
     )
 
     queries = [
+        '"Minecraft x Fossil"',
+        '"Fossil x Minecraft"',
         "LE1252",
-        "Fossil Minecraft The End",
-        "Minecraft Fossil watch"
+        "Fossil Minecraft watch",
     ]
 
     for query in queries:
@@ -626,7 +770,7 @@ def search_ebay():
                     f"Bearer {token}",
 
                     "X-EBAY-C-MARKETPLACE-ID":
-                    "EBAY_US",
+                    "EBAY_IT",
 
                     "Accept":
                     "application/json"
@@ -750,7 +894,6 @@ def dedupe_items(items):
 def classify_source(item):
 
     url = item["url"].lower()
-
     source = item["source"].lower()
 
     if (
@@ -772,22 +915,17 @@ def classify_source(item):
 
 
 # ============================================================
-# FORMATTAZIONE PREZZO
+# PREZZO
 # ============================================================
 
 def format_price(item):
 
-    price = item.get(
-        "price"
-    )
+    price = item.get("price")
 
     if price is None:
-
         return "Prezzo non rilevato"
 
-    currency = item.get(
-        "currency"
-    ) or "?"
+    currency = item.get("currency") or "?"
 
     symbols = {
         "EUR": "€",
@@ -800,21 +938,16 @@ def format_price(item):
         currency + " "
     )
 
-    return (
-        f"{symbol}"
-        f"{price:.2f}"
-    )
+    return f"{symbol}{price:.2f}"
 
 
 # ============================================================
-# NOTIFICA NUOVO RISULTATO
+# NOTIFICA
 # ============================================================
 
 def send_new_item(item):
 
-    source = classify_source(
-        item
-    )
+    source = classify_source(item)
 
     if item["kind"] == "discussion":
 
@@ -845,9 +978,7 @@ def send_new_item(item):
         f"{item['url']}"
     )
 
-    send_telegram(
-        message
-    )
+    send_telegram(message)
 
 
 # ============================================================
@@ -874,7 +1005,7 @@ def collect_prices(items):
 
 
 # ============================================================
-# STORICO GIORNALIERO
+# STORICO
 # ============================================================
 
 def save_daily_history(
@@ -893,9 +1024,7 @@ def save_daily_history(
 
     for item in all_current_items:
 
-        source = classify_source(
-            item
-        )
+        source = classify_source(item)
 
         grouped.setdefault(
             source,
@@ -919,18 +1048,10 @@ def save_daily_history(
         if prices:
 
             snapshot[source] = {
-
-                "count":
-                len(prices),
-
-                "min":
-                min(prices),
-
-                "max":
-                max(prices),
-
-                "average":
-                statistics.mean(prices)
+                "count": len(prices),
+                "min": min(prices),
+                "max": max(prices),
+                "average": statistics.mean(prices)
             }
 
         else:
@@ -941,13 +1062,9 @@ def save_daily_history(
 
     history[date_key] = snapshot
 
-    # Mantiene gli ultimi 90 giorni.
-    keys = sorted(
-        history.keys()
-    )
+    keys = sorted(history.keys())
 
     for key in keys[:-90]:
-
         del history[key]
 
     save_json(
@@ -959,7 +1076,7 @@ def save_daily_history(
 
 
 # ============================================================
-# VARIAZIONE PREZZO
+# VARIAZIONE
 # ============================================================
 
 def pct_change(
@@ -972,18 +1089,16 @@ def pct_change(
         or
         current is None
     ):
-
         return None
 
     return (
         (current - previous)
-        /
-        previous
+        / previous
     ) * 100
 
 
 # ============================================================
-# REPORT GIORNALIERO
+# REPORT
 # ============================================================
 
 def build_daily_report(
@@ -992,8 +1107,6 @@ def build_daily_report(
     now,
     history
 ):
-
-    today = now.date().isoformat()
 
     yesterday = (
         now.date()
@@ -1007,9 +1120,7 @@ def build_daily_report(
 
     for item in all_items:
 
-        source = classify_source(
-            item
-        )
+        source = classify_source(item)
 
         sources.setdefault(
             source,
@@ -1017,10 +1128,8 @@ def build_daily_report(
         ).append(item)
 
     lines = [
-
         "📊 LE1252 MARKET REPORT "
         f"— {now.strftime('%d/%m/%Y')}",
-
         ""
     ]
 
@@ -1038,68 +1147,45 @@ def build_daily_report(
 
         if source == "Reddit":
 
-            if results:
-
-                lines.append(
-                    f"Reddit: "
-                    f"{len(results)} "
-                    f"discussioni trovate"
-                )
-
-            else:
-
-                lines.append(
-                    "Reddit: nessuna "
-                    "discussione rilevata"
-                )
+            lines.append(
+                f"Reddit: "
+                f"{len(results)} "
+                f"discussioni rilevanti"
+            )
 
             continue
 
         prices = [
-
             item["price"]
-
             for item in results
-
             if (
-                item.get("price")
-                is not None
+                item.get("price") is not None
                 and
-                item.get("currency")
-                == "EUR"
+                item.get("currency") == "EUR"
             )
         ]
 
         if prices:
 
             lines.append(
-
                 f"{source}: "
                 f"{len(results)} risultati | "
-
                 f"min €{min(prices):.2f} | "
-
-                f"media €"
-                f"{statistics.mean(prices):.2f} | "
-
+                f"media €{statistics.mean(prices):.2f} | "
                 f"max €{max(prices):.2f}"
             )
 
         else:
 
             lines.append(
-
                 f"{source}: "
                 f"{len(results)} risultati | "
                 "prezzi non rilevati"
             )
 
     new_today = [
-
         item
-
         for item in new_items
-
         if classify_source(item)
         in (
             "eBay",
@@ -1163,7 +1249,6 @@ def build_daily_report(
             )
 
             lines.append(
-
                 f"📈 Prezzo medio vs ieri: "
                 f"{sign}{change:.1f}%"
             )
@@ -1178,8 +1263,8 @@ def build_daily_report(
     lines.append("")
 
     lines.append(
-        "ℹ️ I prezzi sono prezzi richiesti, "
-        "non necessariamente prezzi di vendita."
+        "ℹ️ Il radar riguarda esclusivamente "
+        "la nuova collezione Minecraft × Fossil."
     )
 
     return "\n".join(lines)
@@ -1191,11 +1276,7 @@ def build_daily_report(
 
 def should_send_daily_report(now):
 
-    # Il report viene inviato dopo le 18:00
-    # ora italiana.
-
     if now.hour < 18:
-
         return False
 
     state = load_json(
@@ -1227,7 +1308,7 @@ def mark_daily_report_sent(now):
 def main():
 
     # --------------------------------------------------------
-    # TEST MANUALE TELEGRAM
+    # TEST TELEGRAM
     # --------------------------------------------------------
 
     if (
@@ -1249,7 +1330,7 @@ def main():
         )
 
     # --------------------------------------------------------
-    # ORA
+    # ORA ITALIANA
     # --------------------------------------------------------
 
     now = (
@@ -1267,7 +1348,7 @@ def main():
     )
 
     # --------------------------------------------------------
-    # CARICA ELEMENTI GIÀ VISTI
+    # ELEMENTI GIÀ VISTI
     # --------------------------------------------------------
 
     seen = load_json(
@@ -1279,14 +1360,11 @@ def main():
         seen,
         dict
     ):
-
         seen = {}
 
     # --------------------------------------------------------
-    # RICERCHE
+    # RICERCA EBAY
     # --------------------------------------------------------
-
-    current = []
 
     print(
         "🔎 Ricerca eBay..."
@@ -1295,9 +1373,13 @@ def main():
     ebay_items = search_ebay()
 
     print(
-        f"eBay API: "
-        f"{len(ebay_items)} risultati"
+        f"eBay: "
+        f"{len(ebay_items)} risultati rilevanti"
     )
+
+    # --------------------------------------------------------
+    # RICERCA WEB
+    # --------------------------------------------------------
 
     print(
         "🔎 Ricerca web..."
@@ -1307,8 +1389,12 @@ def main():
 
     print(
         f"Web: "
-        f"{len(web_items)} risultati"
+        f"{len(web_items)} risultati rilevanti"
     )
+
+    # --------------------------------------------------------
+    # RICERCA REDDIT
+    # --------------------------------------------------------
 
     print(
         "🔎 Ricerca Reddit..."
@@ -1318,8 +1404,14 @@ def main():
 
     print(
         f"Reddit: "
-        f"{len(reddit_items)} risultati"
+        f"{len(reddit_items)} risultati rilevanti"
     )
+
+    # --------------------------------------------------------
+    # UNIONE
+    # --------------------------------------------------------
+
+    current = []
 
     current.extend(
         ebay_items
@@ -1338,12 +1430,13 @@ def main():
     )
 
     print(
-        f"🔎 Risultati rilevanti totali: "
+        f"🔎 RISULTATI TOTALI "
+        f"MINECRAFT × FOSSIL: "
         f"{len(current)}"
     )
 
     # --------------------------------------------------------
-    # TROVA NUOVI RISULTATI
+    # NUOVI ELEMENTI
     # --------------------------------------------------------
 
     new_items = []
@@ -1384,7 +1477,7 @@ def main():
             }
 
     # --------------------------------------------------------
-    # INVIA NOTIFICHE
+    # NOTIFICHE
     # --------------------------------------------------------
 
     for item in new_items:
@@ -1408,7 +1501,7 @@ def main():
             )
 
     # --------------------------------------------------------
-    # SALVA ELEMENTI VISTI
+    # SALVA DATABASE
     # --------------------------------------------------------
 
     save_json(
@@ -1417,7 +1510,7 @@ def main():
     )
 
     # --------------------------------------------------------
-    # SALVA STORICO PREZZI
+    # STORICO
     # --------------------------------------------------------
 
     history = save_daily_history(
@@ -1426,12 +1519,10 @@ def main():
     )
 
     # --------------------------------------------------------
-    # REPORT GIORNALIERO
+    # REPORT
     # --------------------------------------------------------
 
-    if should_send_daily_report(
-        now
-    ):
+    if should_send_daily_report(now):
 
         try:
 
@@ -1472,5 +1563,4 @@ def main():
 
 
 if __name__ == "__main__":
-
     main()
