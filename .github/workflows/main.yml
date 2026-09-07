@@ -36,8 +36,6 @@ jobs:
         env:
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
           CHAT_ID: ${{ secrets.CHAT_ID }}
-          EBAY_CLIENT_ID: ${{ secrets.EBAY_CLIENT_ID }}
-          EBAY_CLIENT_SECRET: ${{ secrets.EBAY_CLIENT_SECRET }}
           FORCE_NOTIFY: ${{ github.event.inputs.force_notify }}
         run: |
           echo "🕐 Radar eseguito: $(date '+%Y-%m-%d %H:%M:%S UTC')"
