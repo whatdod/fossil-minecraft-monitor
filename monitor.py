@@ -1,9 +1,11 @@
 import json
 import os
+import re
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 import requests
+from bs4 import BeautifulSoup
 
 
 # ============================================================
@@ -255,275 +257,182 @@ def parse_price(price_obj):
 
 
 # ============================================================
-# EBAY OAUTH
+# EBAY - RICERCA VENDUTI (scraping pagina pubblica)
 # ============================================================
+#
+# La Marketplace Insights API ufficiale di eBay è una API
+# "Limited Release": eBay non concede più l'accesso a nuovi
+# sviluppatori (non è un problema di credenziali sbagliate).
+# Per questo motivo usiamo la pagina pubblica dei risultati
+# "Venduto" di eBay, che non richiede alcuna autenticazione.
 
-def ebay_get_application_token():
+EBAY_SOLD_SCRAPE_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/124.0.0.0 Safari/537.36"
+    ),
+    "Accept-Language": "it-IT,it;q=0.9",
+}
+
+
+def ebay_scrape_sold_search(keyword):
     """
-    Ottiene un Application Access Token eBay
-    tramite Client Credentials Grant.
+    Interroga la pagina pubblica eBay.it dei risultati
+    "Venduto" per una keyword.
 
-    Questo token è quello necessario per le Buy APIs.
-    """
-
-    if not EBAY_CLIENT_ID or not EBAY_CLIENT_SECRET:
-        print("⚠️ eBay: EBAY_CLIENT_ID o EBAY_CLIENT_SECRET mancanti.")
-        return None
-
-    token_url = "https://api.ebay.com/identity/v1/oauth2/token"
-
-    try:
-
-        response = session.post(
-            token_url,
-            auth=(EBAY_CLIENT_ID, EBAY_CLIENT_SECRET),
-            headers={
-                "Content-Type": "application/x-www-form-urlencoded",
-                "Accept": "application/json",
-            },
-            data={
-                "grant_type": "client_credentials",
-                "scope": (
-                    "https://api.ebay.com/oauth/api_scope"
-                ),
-            },
-            timeout=30,
-        )
-
-        if response.status_code != 200:
-
-            print(
-                f"[eBay OAuth] errore HTTP {response.status_code}: "
-                f"{response.text[:500]}"
-            )
-
-            return None
-
-        data = response.json()
-
-        token = data.get("access_token")
-
-        if not token:
-            print("[eBay OAuth] risposta senza access_token.")
-            return None
-
-        print("✅ eBay OAuth: token ottenuto.")
-
-        return token
-
-    except requests.RequestException as e:
-
-        print(f"[eBay OAuth] errore di connessione: {e}")
-
-        return None
-
-    except Exception as e:
-
-        print(f"[eBay OAuth] errore: {e}")
-
-        return None
-
-
-# ============================================================
-# EBAY MARKETPLACE INSIGHTS
-# ============================================================
-
-def ebay_marketplace_insights_search(token, keyword):
-    """
-    Cerca gli articoli VENDUTI tramite Marketplace Insights.
-
-    Questa API restituisce la cronologia delle vendite eBay.
-    È una API a accesso limitato.
-
-    Se il token non dispone dei permessi necessari,
-    restituiamo None per distinguere:
-
-        None = fonte non disponibile / non autorizzata
-        []   = fonte funzionante ma nessun risultato
+    Restituisce:
+        None -> richiesta fallita (rete, blocco, HTTP != 200)
+        list -> annunci venduti trovati (anche vuota)
     """
 
-    url = (
-        "https://api.ebay.com/"
-        "buy/marketplace_insights/v1_beta/item_sales/search"
-    )
-
-    # Ultimi 90 giorni: è il limite previsto dalla API.
-    end_time = utc_now()
-    start_time = end_time - timedelta(days=89)
-
-    start_iso = start_time.strftime("%Y-%m-%dT%H:%M:%S.000Z")
-    end_iso = end_time.strftime("%Y-%m-%dT%H:%M:%S.000Z")
-
-    headers = {
-        "Authorization": f"Bearer {token}",
-        "Accept": "application/json",
-        "X-EBAY-C-MARKETPLACE-ID": "EBAY_US",
-    }
+    url = "https://www.ebay.it/sch/i.html"
 
     params = {
-        "q": keyword,
-        "filter": f"lastSoldDate:[{start_iso}..{end_iso}]",
-        "limit": 100,
-        "offset": 0,
+        "_nkw": keyword,
+        "LH_Sold": 1,
+        "LH_Complete": 1,
+        "_ipg": 100,
     }
 
     try:
 
-        response = session.get(
+        response = requests.get(
             url,
-            headers=headers,
+            headers=EBAY_SOLD_SCRAPE_HEADERS,
             params=params,
             timeout=30,
         )
 
-        if response.status_code in (401, 403):
-
-            print(
-                "[eBay Insights] ACCESSO NEGATO "
-                f"(HTTP {response.status_code})."
-            )
-
-            try:
-                print(response.json())
-            except Exception:
-                print(response.text[:500])
-
-            return None
-
         if response.status_code != 200:
 
             print(
-                f"[eBay Insights] errore HTTP "
-                f"{response.status_code}: {response.text[:500]}"
+                f"[eBay scrape] errore HTTP "
+                f"{response.status_code} per '{keyword}'."
             )
 
             return None
 
-        data = response.json()
+        soup = BeautifulSoup(response.text, "html.parser")
 
-        return data
+        items = soup.select("li.s-item")
+
+        results = []
+
+        for item in items:
+
+            title_el = item.select_one(".s-item__title")
+
+            if not title_el:
+                continue
+
+            title = title_el.get_text(strip=True)
+
+            if not title or title.lower().startswith("risultati per"):
+                continue
+
+            if not is_relevant(title):
+                continue
+
+            link_el = item.select_one("a.s-item__link")
+
+            url_item = link_el["href"] if link_el and link_el.has_attr("href") else ""
+
+            item_id_match = re.search(r"/itm/(\d+)", url_item)
+
+            if not item_id_match:
+                continue
+
+            item_id = item_id_match.group(1)
+
+            price_el = item.select_one(".s-item__price")
+
+            price_text = price_el.get_text(strip=True) if price_el else ""
+
+            price, currency = parse_ebay_price_text(price_text)
+
+            sold_date = ""
+
+            date_el = item.select_one(".s-item__caption--signal, .POSITIVE")
+
+            if date_el:
+                sold_date = date_el.get_text(strip=True)
+
+            results.append(
+                {
+                    "id": f"ebay-{item_id}",
+                    "title": title,
+                    "price": price,
+                    "currency": currency,
+                    "source": "eBay",
+                    "url": url_item.split("?")[0],
+                    "sold_date": sold_date,
+                }
+            )
+
+        return results
 
     except requests.RequestException as e:
 
-        print(f"[eBay Insights] errore di connessione: {e}")
+        print(f"[eBay scrape] errore di connessione: {e}")
 
         return None
 
     except Exception as e:
 
-        print(f"[eBay Insights] errore: {e}")
+        print(f"[eBay scrape] errore: {e}")
 
         return None
 
 
-def extract_ebay_sales(data):
+def parse_ebay_price_text(text):
     """
-    Estrae le vendite dal JSON restituito da eBay.
+    Converte un testo tipo 'EUR 189,00' o '€ 189,00 a 210,00'
+    in (valore_float, valuta). Se è un range prende il primo valore.
     """
 
-    if not isinstance(data, dict):
-        return []
+    if not text:
+        return None, ""
 
-    item_sales = data.get("itemSales", [])
+    currency = "EUR" if "€" in text or "EUR" in text.upper() else ""
 
-    if not isinstance(item_sales, list):
-        return []
+    match = re.search(r"(\d+(?:[.,]\d+)?)", text.replace(".", "").replace(",", "."))
 
-    results = []
+    if not match:
+        return None, currency
 
-    for item in item_sales:
-
-        if not isinstance(item, dict):
-            continue
-
-        title = (
-            item.get("title")
-            or item.get("itemTitle")
-            or ""
-        )
-
-        if not is_relevant(title):
-            continue
-
-        item_id = (
-            item.get("itemId")
-            or item.get("legacyItemId")
-            or item.get("item_id")
-        )
-
-        if not item_id:
-            continue
-
-        price, currency = parse_price(
-            item.get("price")
-        )
-
-        if price is None:
-            continue
-
-        sold_date = (
-            item.get("lastSoldDate")
-            or item.get("soldDate")
-            or item.get("itemEndDate")
-            or ""
-        )
-
-        url = (
-            item.get("itemWebUrl")
-            or item.get("itemUrl")
-            or ""
-        )
-
-        result = {
-            "id": f"ebay-{item_id}",
-            "title": title.strip(),
-            "price": price,
-            "currency": currency or "",
-            "source": "eBay",
-            "url": url,
-            "sold_date": sold_date,
-        }
-
-        results.append(result)
-
-    return results
+    try:
+        return float(match.group(1)), currency
+    except Exception:
+        return None, currency
 
 
 def search_ebay_sales():
     """
-    Esegue tutte le query eBay.
+    Esegue tutte le query eBay tramite scraping della
+    pagina pubblica dei "Venduto".
 
     Restituisce:
-        None -> eBay non disponibile
-        []   -> eBay disponibile, zero vendite
+        None -> eBay non raggiungibile per nessuna query
+        []   -> eBay raggiungibile, zero vendite pertinenti
         list -> vendite trovate
     """
 
-    print("\n🔎 eBay: ricerca tramite API delle vendite concluse...")
-
-    token = ebay_get_application_token()
-
-    if not token:
-        return None
+    print("\n🔎 eBay: ricerca annunci VENDUTO (pagina pubblica)...")
 
     all_sales = {}
     successful_queries = 0
 
     for keyword in SEARCHES:
 
-        print(f"[eBay Insights] query: {keyword}")
+        print(f"[eBay scrape] query: {keyword}")
 
-        data = ebay_marketplace_insights_search(
-            token,
-            keyword,
-        )
+        sales = ebay_scrape_sold_search(keyword)
 
-        if data is None:
+        if sales is None:
             continue
 
         successful_queries += 1
-
-        sales = extract_ebay_sales(data)
 
         for sale in sales:
             all_sales[sale["id"]] = sale
@@ -532,7 +441,7 @@ def search_ebay_sales():
 
         print(
             "🔴 eBay: nessuna query ha restituito dati "
-            "utilizzabili."
+            "utilizzabili (possibile blocco temporaneo)."
         )
 
         return None
