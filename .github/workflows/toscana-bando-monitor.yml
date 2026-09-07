@@ -1,0 +1,93 @@
+name: Toscana Bando Monitor
+on:
+  schedule:
+    - cron: "*/15 * * * *"
+  workflow_dispatch:
+permissions:
+  contents: write
+concurrency:
+  group: toscana-bando-monitor
+  cancel-in-progress: false
+jobs:
+  monitor:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: pip install requests beautifulsoup4
+
+      - name: Check bando update date
+        env:
+          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+          CHAT_ID: ${{ secrets.CHAT_ID }}
+        run: |
+          python - <<'PY'
+          import os
+          import re
+          import requests
+          from bs4 import BeautifulSoup
+
+          url = "https://www.sviluppo.toscana.it/bando/bandirs2025/"
+          bot_token = os.environ["BOT_TOKEN"]
+          chat_id = os.environ["CHAT_ID"]
+
+          headers = {
+              "User-Agent": (
+                  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                  "AppleWebKit/537.36 (KHTML, like Gecko) "
+                  "Chrome/124.0.0.0 Safari/537.36"
+              )
+          }
+
+          resp = requests.get(url, headers=headers, timeout=30)
+          resp.raise_for_status()
+          soup = BeautifulSoup(resp.text, "html.parser")
+          text = soup.get_text(" ", strip=True)
+
+          # cerca "Ultima modifica: gg.mm.aaaa" nel testo visibile
+          match = re.search(r"Ultima modifica:\s*(\d{2}\.\d{2}\.\d{4})", text)
+          if not match:
+              print("ATTENZIONE: stringa 'Ultima modifica' non trovata, controlla la pagina manualmente.")
+              raise SystemExit(0)
+
+          current_date = match.group(1)
+          print(f"Data trovata sulla pagina: {current_date}")
+
+          state_file = "bando_status.txt"
+          try:
+              with open(state_file, "r") as f:
+                  previous_date = f.read().strip()
+          except FileNotFoundError:
+              previous_date = None
+
+          print(f"Data precedente salvata: {previous_date}")
+
+          if previous_date is not None and previous_date != current_date:
+              message = (
+                  "📢 BANDI RS 2025 — PAGINA AGGIORNATA!\n\n"
+                  f"Data modifica precedente: {previous_date}\n"
+                  f"Nuova data modifica: {current_date}\n\n"
+                  "Controlla subito:\n" + url
+              )
+              requests.post(
+                  f"https://api.telegram.org/bot{bot_token}/sendMessage",
+                  data={"chat_id": chat_id, "text": message},
+                  timeout=30,
+              )
+              print("📢 ALERT AGGIORNAMENTO INVIATO")
+          else:
+              print("Nessun cambiamento rispetto all'ultima esecuzione.")
+
+          with open(state_file, "w") as f:
+              f.write(current_date)
+          PY
+
+      - name: Save status
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add bando_status.txt
+          git diff --cached --quiet || git commit -m "Update bando Toscana status"
+          git push
